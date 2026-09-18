@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>F1 Race Rewind</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>🏁 F1 Race Rewind</h1>
+    <p class="tagline">ดูย้อนหลังว่าเรซ F1 ในอดีตเกิดอะไรขึ้นบ้าง <span class="replay-badge">REPLAY</span></p>
+  </header>
+
+  <div class="controls">
+    <label>
+      ปี
+      <select id="year-select"></select>
+    </label>
+    <label class="race-label">
+      เรซ
+      <select id="race-select"></select>
+    </label>
+    <div id="race-error" class="inline-error" hidden></div>
+  </div>
+
+  <main id="app-main">
+    <section class="summary-bar" id="summary-bar" aria-label="สรุปเรซ">
+      <div class="summary-skeleton" id="summary-skeleton">
+        <div class="skel skel-chip"></div>
+        <div class="skel skel-chip"></div>
+        <div class="skel skel-chip"></div>
+        <div class="skel skel-chip"></div>
+      </div>
+      <div id="summary-content" class="summary-content" hidden></div>
+    </section>
+
+    <section class="content-grid">
+      <div class="timeline-panel">
+        <div class="panel-toolbar">
+          <div class="sort-group" role="group" aria-label="เรียงไทม์ไลน์">
+            <span class="toolbar-label">เรียง:</span>
+            <button class="sort-btn active" data-sort="time">ตามเวลา</button>
+            <button class="sort-btn" data-sort="lap">ตามรอบ</button>
+            <button class="sort-btn" data-sort="driver">ตามนักขับ</button>
+          </div>
+          <div class="filter-group">
+            <label>
+              นักขับ
+              <select id="driver-filter">
+                <option value="">ทุกคน</option>
+              </select>
+            </label>
+            <label>
+              ประเภท
+              <select id="type-filter">
+                <option value="">ทุกประเภท</option>
+                <option value="overtake">แซง</option>
+                <option value="pit">เข้าพิท</option>
+                <option value="flag">ธง</option>
+                <option value="safety_car">Safety Car</option>
+                <option value="drs">DRS</option>
+                <option value="other_control">อื่น ๆ</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div id="timeline-skeleton" class="timeline-skeleton" aria-hidden="true">
+          <div class="skel skel-card"></div>
+          <div class="skel skel-card"></div>
+          <div class="skel skel-card"></div>
+          <div class="skel skel-card"></div>
+          <div class="skel skel-card"></div>
+        </div>
+
+        <div id="timeline-empty" class="empty-state" hidden>
+          <p>ไม่มีข้อมูลไทม์ไลน์สำหรับเรซนี้</p>
+        </div>
+
+        <div id="timeline-error" class="error-state" hidden>
+          <p>โหลดไทม์ไลน์ไม่สำเร็จ — ลองใหม่อีกครั้ง</p>
+          <button id="timeline-retry">ลองใหม่</button>
+        </div>
+
+        <ul id="timeline-list" class="timeline-list" hidden></ul>
+      </div>
+
+      <div class="side-panel">
+        <section class="card">
+          <h2>ผลจบการแข่ง</h2>
+          <div id="results-skeleton" class="table-skeleton">
+            <div class="skel skel-row"></div>
+            <div class="skel skel-row"></div>
+            <div class="skel skel-row"></div>
+          </div>
+          <div id="results-empty" class="empty-state" hidden><p>ไม่มีข้อมูลผลจบการแข่ง</p></div>
+          <table id="results-table" class="data-table" hidden>
+            <thead>
+              <tr>
+                <th data-sort-key="position">อันดับ</th>
+                <th data-sort-key="fullName">นักขับ</th>
+                <th data-sort-key="teamName">ทีม</th>
+                <th data-sort-key="points">แต้ม</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </section>
+
+        <section class="card">
+          <h2>พิทสต็อปเร็วสุด</h2>
+          <div id="pits-skeleton" class="table-skeleton">
+            <div class="skel skel-row"></div>
+            <div class="skel skel-row"></div>
+          </div>
+          <div id="pits-empty" class="empty-state" hidden><p>ไม่มีข้อมูลการเข้าพิทสำหรับเรซนี้</p></div>
+          <ol id="pits-list" class="pits-list" hidden></ol>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p>ข้อมูลจาก <a href="https://openf1.org" target="_blank" rel="noopener">OpenF1 API</a> — ข้อมูลย้อนหลังเท่านั้น (REPLAY)</p>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,428 @@
+:root {
+  --bg: #0d1117;
+  --bg-elevated: #161b22;
+  --bg-card: #1c2128;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --accent: #e10600; /* F1 red */
+  --accent-soft: rgba(225, 6, 0, 0.15);
+  --radius: 10px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* ต้องมาก่อนกฎ display อื่น ๆ ที่มี specificity เท่ากัน (เช่น .timeline-skeleton{display:flex})
+   ไม่งั้น element ที่ตั้ง [hidden] ผ่าน JS จะไม่ถูกซ่อนจริง เพราะ author stylesheet ชนกันเอง */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", Roboto, -apple-system, BlinkMacSystemFont, sans-serif;
+  line-height: 1.5;
+}
+
+a {
+  color: #58a6ff;
+}
+
+.app-header {
+  padding: 20px 16px 8px;
+  text-align: center;
+}
+
+.app-header h1 {
+  margin: 0 0 4px;
+  font-size: 1.6rem;
+}
+
+.tagline {
+  color: var(--text-dim);
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.replay-badge {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.05em;
+  margin-left: 6px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.race-label {
+  flex: 1;
+  min-width: 200px;
+}
+
+select {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  min-width: 160px;
+}
+
+.race-label select {
+  width: 100%;
+}
+
+.inline-error {
+  color: #f85149;
+  font-size: 0.85rem;
+}
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 16px 40px;
+}
+
+/* ---- summary bar ---- */
+
+.summary-bar {
+  margin-bottom: 16px;
+}
+
+.summary-content {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.summary-chip {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  flex: 1;
+  min-width: 140px;
+}
+
+.summary-chip .label {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.summary-chip .value {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.summary-skeleton {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.skel-chip {
+  flex: 1;
+  min-width: 140px;
+  height: 52px;
+}
+
+/* ---- layout ---- */
+
+.content-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 800px) {
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+/* ---- timeline toolbar ---- */
+
+.panel-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.sort-group,
+.filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.toolbar-label {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.sort-btn {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.sort-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.filter-group select {
+  min-width: 130px;
+  font-size: 0.8rem;
+  padding: 6px 8px;
+}
+
+/* ---- timeline list ---- */
+
+.timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.timeline-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--team-color, var(--accent));
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  transition: opacity 0.15s ease, outline 0.15s ease;
+}
+
+.timeline-card.dimmed {
+  opacity: 0.3;
+}
+
+.timeline-card.highlighted {
+  outline: 2px solid var(--team-color, var(--accent));
+  outline-offset: 1px;
+}
+
+.timeline-card .icon {
+  font-size: 1.1rem;
+  line-height: 1.3;
+}
+
+.timeline-card .body {
+  flex: 1;
+  min-width: 0;
+}
+
+.timeline-card .meta-row {
+  display: flex;
+  gap: 8px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+
+.timeline-card .lap-badge {
+  background: var(--bg-elevated);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.timeline-card .message {
+  font-size: 0.92rem;
+}
+
+.driver-chip {
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+/* ---- skeletons ---- */
+
+.skel {
+  background: linear-gradient(90deg, var(--bg-elevated) 25%, #21262d 37%, var(--bg-elevated) 63%);
+  background-size: 400% 100%;
+  animation: skel-shimmer 1.4s ease infinite;
+  border-radius: var(--radius);
+}
+
+@keyframes skel-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+.skel-card {
+  height: 56px;
+}
+
+.timeline-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.table-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skel-row {
+  height: 28px;
+}
+
+/* ---- empty / error states ---- */
+
+.empty-state,
+.error-state {
+  color: var(--text-dim);
+  text-align: center;
+  padding: 24px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+}
+
+.error-state {
+  color: #f85149;
+  border-color: #f85149;
+}
+
+.error-state button {
+  margin-top: 8px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+/* ---- results table ---- */
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table th {
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.data-table th.sorted::after {
+  content: " ▾";
+}
+
+.team-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--dot-color, var(--accent));
+}
+
+/* ---- fastest pits ---- */
+
+.pits-list {
+  margin: 0;
+  padding: 0 0 0 18px;
+  font-size: 0.85rem;
+}
+
+.pits-list li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pits-list li:last-child {
+  border-bottom: none;
+}
+
+/* ---- footer ---- */
+
+.app-footer {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  padding: 16px;
+}
+
+@media (max-width: 480px) {
+  .controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  select {
+    width: 100%;
+  }
+}
