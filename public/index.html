@@ -35,6 +35,28 @@
       <div id="summary-content" class="summary-content" hidden></div>
     </section>
 
+    <section class="card map-card" aria-label="แผนที่สนาม">
+      <div class="map-header">
+        <h2>แผนที่สนาม</h2>
+        <span id="map-status-label" class="map-status-label"></span>
+      </div>
+
+      <div id="map-skeleton" class="skel map-skeleton"></div>
+      <div id="map-empty" class="empty-state" hidden><p>ยังไม่มีข้อมูลแผนที่สนามสำหรับเรซนี้</p></div>
+      <div id="map-error" class="error-state" hidden><p>โหลดตำแหน่งรถไม่สำเร็จ</p></div>
+
+      <div id="map-view" hidden>
+        <svg id="track-svg" class="track-svg" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet">
+          <path id="track-path" class="track-path"></path>
+          <g id="car-dots"></g>
+        </svg>
+        <div class="map-controls">
+          <input type="range" id="time-scrubber" min="0" max="1000" value="0" step="1" />
+          <span id="scrubber-time-label" class="scrubber-time-label">--:--:--</span>
+        </div>
+      </div>
+    </section>
+
     <section class="content-grid">
       <div class="timeline-panel">
         <div class="panel-toolbar">

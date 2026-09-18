@@ -3,13 +3,16 @@
 // import DSA เดียวกับที่ server ใช้ตรงจาก /lib ผ่าน Express static (ES module native ในเบราว์เซอร์)
 import { mergeSort } from "/lib/sort.js";
 import { HashTable } from "/lib/HashTable.js";
+import { applyTrackTransform } from "/lib/track.js";
 
 const YEARS = [2025, 2024, 2023];
 const DEFAULT_YEAR = 2024;
 
 // ---------- client-side cache (ชั้นที่ 2 ต่อจาก module-scope cache บน server) ----------
 // ข้อมูลเป็นข้อมูลย้อนหลังที่ไม่เปลี่ยนแปลงแล้ว จึง cache ถาวรได้เลยไม่ต้องมี TTL
-const CACHE_PREFIX = "f1rr:v1:";
+// เพิ่มเลขเวอร์ชันทุกครั้งที่ schema ของ response เปลี่ยน (เช่นเพิ่ม field ใหม่) ไม่งั้น
+// เบราว์เซอร์ที่เคย cache ไว้ก่อนหน้าจะอ่านข้อมูลเก่าที่ไม่มี field ใหม่ต่อไปเรื่อย ๆ
+const CACHE_PREFIX = "f1rr:v2:";
 
 function cacheGet(key) {
   try {
@@ -55,6 +58,12 @@ async function getRaceTimeline(sessionKey) {
   return data;
 }
 
+async function getPositions(sessionKey, fromIso, toIso) {
+  // ไม่ cache ที่นี่ (ต่างจากข้างบน) เพราะ scrubber สร้างหน้าต่างเวลาที่ต่างกันทุกครั้งที่ลาก
+  // cache ไว้จะบวมเปล่า ๆ โดยไม่ได้ hit ซ้ำจริง
+  return fetchJson(`/api/positions/${sessionKey}?from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`);
+}
+
 // ---------- DOM refs ----------
 const yearSelect = document.getElementById("year-select");
 const raceSelect = document.getElementById("race-select");
@@ -82,6 +91,16 @@ const pitsSkeleton = document.getElementById("pits-skeleton");
 const pitsEmpty = document.getElementById("pits-empty");
 const pitsList = document.getElementById("pits-list");
 
+const mapSkeleton = document.getElementById("map-skeleton");
+const mapEmpty = document.getElementById("map-empty");
+const mapErrorEl = document.getElementById("map-error");
+const mapView = document.getElementById("map-view");
+const mapStatusLabel = document.getElementById("map-status-label");
+const trackPath = document.getElementById("track-path");
+const carDotsGroup = document.getElementById("car-dots");
+const timeScrubber = document.getElementById("time-scrubber");
+const scrubberTimeLabel = document.getElementById("scrubber-time-label");
+
 // ---------- state ----------
 const state = {
   currentSessionKey: null,
@@ -93,6 +112,11 @@ const state = {
   resultsSortKey: "position",
   resultsSortAsc: true,
   driverEventIndex: null, // HashTable: driverNumber -> HashTable(eventId -> true)
+  racesByKey: new HashTable(64), // sessionKey -> race object (จากรายชื่อเรซ) สำหรับ lookup circuitKey/dateStart
+  trackData: null, // ผลจาก public/tracks/<circuitKey>.json ของเรซปัจจุบัน
+  mapAnimationHandle: null,
+  scrubberDebounceHandle: null,
+  mapRequestId: 0, // กัน race condition: ถ้ามีคำขอใหม่กว่าเริ่มไปแล้ว ผลของคำขอเก่าที่ resolve ทีหลังต้องถูกทิ้ง
 };
 
 const TYPE_ICON = {
@@ -333,6 +357,209 @@ function populateDriverFilter() {
   driverFilterSelect.value = state.driverFilter;
 }
 
+// ---------- track map (เฟส 2) ----------
+
+function stopMapAnimation() {
+  if (state.mapAnimationHandle != null) {
+    cancelAnimationFrame(state.mapAnimationHandle);
+    state.mapAnimationHandle = null;
+  }
+}
+
+function renderTrackPath(trackData) {
+  const d = trackData.points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ") + " Z";
+  trackPath.setAttribute("d", d);
+  document.getElementById("track-svg").setAttribute("viewBox", `0 0 ${trackData.viewBox.width} ${trackData.viewBox.height}`);
+}
+
+/** initCarDots - สร้าง SVG element ของรถแต่ละคันครั้งเดียวตอนโหลดเรซ แล้วแก้แค่ตำแหน่ง/opacity ทีหลัง */
+function initCarDots(drivers) {
+  carDotsGroup.innerHTML = drivers
+    .map(
+      (d) => `<g class="car-dot" data-driver="${d.driverNumber}" style="opacity:0">
+        <circle r="7" fill="#${d.teamColour}"></circle>
+        <text y="-11">${escapeHtml(d.acronym)}</text>
+      </g>`
+    )
+    .join("");
+}
+
+/** interpolatePosition - เดา (x,y) ที่เวลา targetMs จาก sample ที่มี (เชิงเส้นระหว่าง 2 จุดที่ใกล้ที่สุด) */
+function interpolatePosition(samples, targetMs) {
+  if (!samples || samples.length === 0) return null;
+  if (samples.length === 1) return samples[0];
+
+  let prev = samples[0];
+  const prevTime = new Date(prev.date).getTime();
+  if (targetMs <= prevTime) return prev;
+
+  for (let i = 1; i < samples.length; i++) {
+    const cur = samples[i];
+    const curMs = new Date(cur.date).getTime();
+    const prevMs = new Date(prev.date).getTime();
+    if (targetMs <= curMs) {
+      const ratio = curMs === prevMs ? 0 : (targetMs - prevMs) / (curMs - prevMs);
+      return { x: prev.x + (cur.x - prev.x) * ratio, y: prev.y + (cur.y - prev.y) * ratio };
+    }
+    prev = cur;
+  }
+  return samples[samples.length - 1];
+}
+
+/** updateDotsAtTime - วางจุดรถทุกคันที่เวลา targetMs, ทำให้นักขับใน highlightDriverNumbers เต็ม คนอื่นจาง */
+function updateDotsAtTime(positions, targetMs, highlightDriverNumbers = []) {
+  if (!state.trackData) return;
+  const highlight = highlightDriverNumbers.length > 0 ? new HashTable(8) : null;
+  if (highlight) highlightDriverNumbers.forEach((n) => highlight.set(n, true));
+
+  const dots = carDotsGroup.querySelectorAll(".car-dot");
+  for (const dot of dots) {
+    const driverNumber = Number(dot.dataset.driver);
+    const samples = positions[driverNumber] ?? positions[String(driverNumber)];
+    const raw = interpolatePosition(samples, targetMs);
+    if (!raw) {
+      dot.style.opacity = "0";
+      continue;
+    }
+    const { x, y } = applyTrackTransform(state.trackData.transform, raw);
+    dot.setAttribute("transform", `translate(${x.toFixed(1)}, ${y.toFixed(1)})`);
+    dot.style.opacity = !highlight || highlight.has(driverNumber) ? "1" : "0.25";
+  }
+}
+
+function showMapLoading() {
+  stopMapAnimation();
+  hide(mapView);
+  hide(mapEmpty);
+  hide(mapErrorEl);
+  show(mapSkeleton);
+  mapStatusLabel.textContent = "";
+}
+
+function showMapEmpty() {
+  stopMapAnimation();
+  hide(mapSkeleton);
+  hide(mapView);
+  hide(mapErrorEl);
+  show(mapEmpty);
+}
+
+function showMapErrorState() {
+  stopMapAnimation();
+  hide(mapSkeleton);
+  hide(mapView);
+  hide(mapEmpty);
+  show(mapErrorEl);
+}
+
+function initScrubberRange(race) {
+  const startMs = new Date(race.dateStart).getTime();
+  const endMs = new Date(race.dateEnd ?? race.dateStart).getTime();
+  timeScrubber.min = String(startMs);
+  timeScrubber.max = String(endMs > startMs ? endMs : startMs + 60 * 60 * 1000);
+}
+
+function formatClock(ms) {
+  return new Date(ms).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+/** seekMapTo - โหลดตำแหน่งรถรอบเวลา targetMs (±5s) แล้วแสดงภาพนิ่งที่เวลานั้นพอดี (ใช้กับ scrubber) */
+async function seekMapTo(targetMs, highlightDriverNumbers = []) {
+  if (!state.trackData || state.currentSessionKey == null) return;
+  stopMapAnimation();
+  const requestId = ++state.mapRequestId;
+
+  const fromIso = new Date(targetMs - 5000).toISOString();
+  const toIso = new Date(targetMs + 5000).toISOString();
+
+  try {
+    const { positions } = await getPositions(state.currentSessionKey, fromIso, toIso);
+    // ระหว่างรอ fetch อาจมีการสั่ง seek/play ใหม่แซงมาแล้ว (เช่นลาก scrubber เร็ว ๆ) ถ้าไม่ใช่
+    // คำขอล่าสุดอีกต่อไป ต้องทิ้งผลนี้ ไม่งั้นจะไปเขียนทับตำแหน่งที่ใหม่กว่าด้วยข้อมูลเก่า
+    if (requestId !== state.mapRequestId) return;
+    updateDotsAtTime(positions, targetMs, highlightDriverNumbers);
+  } catch (err) {
+    console.error(err);
+    // ไม่ทำให้แผนที่พัง แค่ไม่ขยับตำแหน่งรถในครั้งนี้ (เช่นช่วงเวลานั้นไม่มีข้อมูล)
+  }
+}
+
+/** playEventOnMap - เล่น animation ตำแหน่งรถช่วง ±5 วินาทีรอบ event ที่คลิกในไทม์ไลน์ */
+async function playEventOnMap(event) {
+  if (!state.trackData || state.currentSessionKey == null) return;
+  stopMapAnimation();
+  const requestId = ++state.mapRequestId;
+
+  const centerMs = new Date(event.date).getTime();
+  const fromMs = centerMs - 5000;
+  const toMs = centerMs + 5000;
+  const fromIso = new Date(fromMs).toISOString();
+  const toIso = new Date(toMs).toISOString();
+
+  mapStatusLabel.textContent = "▶ กำลังเล่นเหตุการณ์...";
+  timeScrubber.value = String(centerMs);
+  scrubberTimeLabel.textContent = formatClock(centerMs);
+
+  try {
+    const { positions } = await getPositions(state.currentSessionKey, fromIso, toIso);
+    if (requestId !== state.mapRequestId) return; // มีคำขอใหม่กว่าแซงมาระหว่างรอ fetch นี้
+
+    const durationMs = toMs - fromMs;
+    const animStart = performance.now();
+
+    const tick = () => {
+      if (requestId !== state.mapRequestId) return; // ถูกยกเลิกโดยคำสั่งใหม่กว่าระหว่าง animate
+      const elapsed = performance.now() - animStart;
+      const simTime = fromMs + Math.min(elapsed, durationMs);
+      updateDotsAtTime(positions, simTime, event.driverNumbers);
+      if (elapsed < durationMs) {
+        state.mapAnimationHandle = requestAnimationFrame(tick);
+      } else {
+        mapStatusLabel.textContent = "";
+      }
+    };
+    tick();
+  } catch (err) {
+    console.error(err);
+    if (requestId !== state.mapRequestId) return;
+    mapStatusLabel.textContent = "โหลดตำแหน่งรถของเหตุการณ์นี้ไม่สำเร็จ";
+  }
+}
+
+async function loadTrackForRace(race) {
+  showMapLoading();
+  state.trackData = null;
+
+  if (!race.circuitKey) {
+    showMapEmpty();
+    return;
+  }
+
+  try {
+    const res = await fetch(`/tracks/${race.circuitKey}.json`);
+    if (!res.ok) {
+      showMapEmpty();
+      return;
+    }
+    state.trackData = await res.json();
+    renderTrackPath(state.trackData);
+    initCarDots(state.timeline?.drivers ?? []);
+    initScrubberRange(race);
+
+    hide(mapSkeleton);
+    show(mapView);
+
+    // แสดงตำแหน่งเริ่มต้นจาก event แรกในไทม์ไลน์ (รับประกันว่าช่วงนั้นมีรถวิ่งจริงแน่ ๆ)
+    const initialMs = state.timeline?.events?.[0] ? new Date(state.timeline.events[0].date).getTime() : new Date(race.dateStart).getTime();
+    timeScrubber.value = String(initialMs);
+    scrubberTimeLabel.textContent = formatClock(initialMs);
+    await seekMapTo(initialMs);
+  } catch (err) {
+    console.error(err);
+    showMapErrorState();
+  }
+}
+
 // ---------- error / loading states for the whole race panel ----------
 
 function showTimelineLoading() {
@@ -380,6 +607,7 @@ async function loadRace(sessionKey) {
   state.currentSessionKey = sessionKey;
   state.highlightedDriver = null;
   showTimelineLoading();
+  showMapLoading();
 
   try {
     const timeline = await getRaceTimeline(sessionKey);
@@ -396,10 +624,15 @@ async function loadRace(sessionKey) {
     renderTimeline();
     renderResultsTable();
     renderPits();
+
+    const race = state.racesByKey.get(sessionKey);
+    if (race) loadTrackForRace(race);
+    else showMapEmpty();
   } catch (err) {
     console.error(err);
     if (state.currentSessionKey !== sessionKey) return;
     showTimelineError();
+    showMapErrorState();
   }
 }
 
@@ -414,6 +647,7 @@ async function loadRacesForYear(year) {
       raceSelect.innerHTML = `<option>ไม่มีเรซในปีนี้</option>`;
       return;
     }
+    for (const r of races) state.racesByKey.set(r.sessionKey, r);
     raceSelect.innerHTML = races
       .map((r) => `<option value="${r.sessionKey}">${escapeHtml(r.meetingName)} — ${escapeHtml(r.sessionName)}</option>`)
       .join("");
@@ -464,10 +698,25 @@ typeFilterSelect.addEventListener("change", () => {
 
 timelineList.addEventListener("click", (evt) => {
   const chip = evt.target.closest(".driver-chip");
-  if (!chip) return;
-  const num = Number(chip.dataset.driver);
-  state.highlightedDriver = state.highlightedDriver === num ? null : num;
-  applyHighlight();
+  if (chip) {
+    const num = Number(chip.dataset.driver);
+    state.highlightedDriver = state.highlightedDriver === num ? null : num;
+    applyHighlight();
+    return;
+  }
+
+  // คลิกที่ตัวการ์ด (ไม่ใช่ driver-chip) → เล่น animation ตำแหน่งรถบนแผนที่ช่วง ±5s ของ event นั้น
+  const card = evt.target.closest(".timeline-card");
+  if (!card) return;
+  const event = state.timeline?.events.find((e) => e.id === card.dataset.id);
+  if (event) playEventOnMap(event);
+});
+
+timeScrubber.addEventListener("input", () => {
+  const targetMs = Number(timeScrubber.value);
+  scrubberTimeLabel.textContent = formatClock(targetMs);
+  clearTimeout(state.scrubberDebounceHandle);
+  state.scrubberDebounceHandle = setTimeout(() => seekMapTo(targetMs), 200);
 });
 
 timelineRetryBtn.addEventListener("click", () => {
