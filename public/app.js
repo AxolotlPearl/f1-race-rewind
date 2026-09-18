@@ -116,6 +116,9 @@ const state = {
   resultsSortKey: "position",
   resultsSortAsc: true,
   driverEventIndex: null, // HashTable: driverNumber -> HashTable(eventId -> true)
+  pitWindowIndex: null, // HashTable: driverNumber -> [{startMs, endMs}] ช่วงที่กำลังเข้าพิท (ใช้กับแมพ)
+  lastSyncedEventId: null, // event ที่ scroll+highlight ไว้ล่าสุดตามเวลาปัจจุบันของแมพ
+  lastSyncAt: 0, // สำหรับ throttle การ sync ไทม์ไลน์กับเวลาแมพ
   racesByKey: new HashTable(64), // sessionKey -> race object (จากรายชื่อเรซ) สำหรับ lookup circuitKey/dateStart
   trackData: null, // ผลจาก public/tracks/<circuitKey>.json ของเรซปัจจุบัน
   mapAnimationHandle: null,
@@ -268,6 +271,7 @@ function renderTimeline() {
   show(timelineList);
 
   applyHighlight();
+  applyCurrentTimeMark(false); // re-render (เปลี่ยน sort/filter) ทำให้ DOM เดิมหาย ต้อง mark ใหม่ (ไม่ scroll)
 }
 
 function buildDriverEventIndex(events) {
@@ -279,6 +283,33 @@ function buildDriverEventIndex(events) {
     }
   }
   return index;
+}
+
+// เข้าพิทใช้เวลาจริงราว ๆ pitDuration วินาทีจาก event.date (เวลาที่เข้า pit lane) แต่ log ของ
+// /pit ไม่บอกเวลาที่ "ออกจาก" pit lane ตรง ๆ จึงประมาณช่วงเข้าพิทเป็น [date, date+pitDuration]
+// แล้วขยายเผื่อ (padding) อีกเล็กน้อยทั้งสองด้าน ให้ badge บนแมพขึ้น/ลงไม่กระทันหันเกินไป
+const PIT_WINDOW_PADDING_MS = 1500;
+
+/** buildPitWindowIndex - HashTable: driverNumber -> array ของช่วงเวลาที่กำลังเข้าพิท (ใช้กับแมพ) */
+function buildPitWindowIndex(events) {
+  const index = new HashTable(16);
+  for (const e of events) {
+    if (e.type !== "pit" || e.pitDuration == null) continue;
+    const startMs = new Date(e.date).getTime() - PIT_WINDOW_PADDING_MS;
+    const endMs = startMs + e.pitDuration * 1000 + PIT_WINDOW_PADDING_MS * 2;
+    for (const num of e.driverNumbers) {
+      if (!index.has(num)) index.set(num, []);
+      index.get(num).push({ startMs, endMs });
+    }
+  }
+  return index;
+}
+
+/** isInPitWindow - เช็คว่า driverNumber กำลังอยู่ในช่วงเข้าพิทที่ targetMs หรือไม่ */
+function isInPitWindow(pitWindowIndex, driverNumber, targetMs) {
+  const windows = pitWindowIndex?.get(driverNumber);
+  if (!windows) return false;
+  return windows.some((w) => targetMs >= w.startMs && targetMs <= w.endMs);
 }
 
 /**
@@ -301,6 +332,47 @@ function applyHighlight() {
     card.classList.toggle("highlighted", belongs);
     card.classList.toggle("dimmed", !belongs);
   }
+}
+
+const TIMELINE_SYNC_THROTTLE_MS = 300;
+
+/** findCurrentEventId - หา event ล่าสุดที่เกิดไปแล้ว ณ targetMs (events เรียงตามเวลาจาก server อยู่แล้ว) */
+function findCurrentEventId(targetMs) {
+  const events = state.timeline?.events;
+  if (!events || events.length === 0) return null;
+  let result = events[0].id;
+  for (const e of events) {
+    if (new Date(e.date).getTime() <= targetMs) result = e.id;
+    else break;
+  }
+  return result;
+}
+
+/** applyCurrentTimeMark - ใส่ class ให้การ์ดที่ตรงกับ state.lastSyncedEventId, scroll ให้เห็นถ้า shouldScroll */
+function applyCurrentTimeMark(shouldScroll) {
+  const prevActive = timelineList.querySelector(".timeline-card.current-time");
+  if (prevActive) prevActive.classList.remove("current-time");
+
+  if (!state.lastSyncedEventId) return;
+  const card = timelineList.querySelector(`[data-id="${state.lastSyncedEventId}"]`);
+  if (!card) return;
+  card.classList.add("current-time");
+  if (shouldScroll) card.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+/**
+ * syncTimelineToTime - เลื่อนไทม์ไลน์ด้านล่างให้ตามเวลาปัจจุบันของแมพโดยอัตโนมัติ (throttle ไว้
+ * เพราะเรียกได้ถี่มากจาก rAF loop ของการเล่น ไม่งั้น smooth-scroll จะชนกันเองจนสั่น)
+ */
+function syncTimelineToTime(targetMs) {
+  const now = performance.now();
+  if (now - state.lastSyncAt < TIMELINE_SYNC_THROTTLE_MS) return;
+  state.lastSyncAt = now;
+
+  const eventId = findCurrentEventId(targetMs);
+  if (!eventId || eventId === state.lastSyncedEventId) return;
+  state.lastSyncedEventId = eventId;
+  applyCurrentTimeMark(true);
 }
 
 function renderResultsTable() {
@@ -391,6 +463,7 @@ function initCarDots(drivers) {
       (d) => `<g class="car-dot" data-driver="${d.driverNumber}" style="opacity:0">
         <circle r="7" fill="#${d.teamColour}"></circle>
         <text y="-11">${escapeHtml(d.acronym)}</text>
+        <text class="pit-badge" y="18" opacity="0">🔧 PIT</text>
       </g>`
     )
     .join("");
@@ -436,6 +509,9 @@ function updateDotsAtTime(positions, targetMs, highlightDriverNumbers = []) {
     const { x, y } = applyTrackTransform(state.trackData.transform, raw);
     dot.setAttribute("transform", `translate(${x.toFixed(1)}, ${y.toFixed(1)})`);
     dot.style.opacity = !highlight || highlight.has(driverNumber) ? "1" : "0.25";
+
+    const pitBadge = dot.querySelector(".pit-badge");
+    if (pitBadge) pitBadge.setAttribute("opacity", isInPitWindow(state.pitWindowIndex, driverNumber, targetMs) ? "1" : "0");
   }
 }
 
@@ -488,7 +564,19 @@ function getSessionBounds() {
 }
 
 const PLAYER_WINDOW_MS = 50000; // ต้อง < 60s (ข้อจำกัดของ /api/positions)
-const PLAYER_PREFETCH_MARGIN_MS = 10000; // เริ่มโหลดหน้าต่างถัดไปก่อนเวลาจะหมดหน้าต่างปัจจุบัน 10 วินาที
+const PLAYER_PREFETCH_LEAD_MS = 3000; // เวลาจริงที่อยากได้เผื่อไว้ให้ fetch หน้าต่างถัดไปเสร็จก่อนชนขอบ
+
+/**
+ * getPrefetchMarginMs - ระยะขอบ (หน่วยเป็นเวลาจำลอง/sim time) ที่ต้องเริ่มโหลดหน้าต่างถัดไปก่อน
+ * ทำไมต้อง scale ตาม speed: margin คงที่ 10s ตอน x1 ให้เวลาจริง 10 วินาทีในการ fetch (พอเหลือเฟือ)
+ * แต่ตอน x10 sim-time 10 วินาทีเท่ากับเวลาจริงแค่ 1 วินาที ซึ่งอาจไม่พอให้ fetch เสร็จ (เครือข่ายช้า/
+ * cold start ของ serverless function) ทำให้เวลาจำลองวิ่งชนขอบ buffer ก่อน แล้วจุดรถ "แข็ง" ค้างรอ
+ * ข้อมูลใหม่ — นี่คือสาเหตุที่แมพกระตุกเป็นช่วง ๆ (ทุก ๆ ~50 วินาทีของเวลาจำลอง ตามขนาด buffer)
+ * แก้โดยให้ margin (sim time) = เวลาจริงที่ต้องการเผื่อ × speed เสมอ ไม่ใช่ค่าคงที่
+ */
+function getPrefetchMarginMs() {
+  return Math.max(10000, PLAYER_PREFETCH_LEAD_MS * state.player.speed);
+}
 
 /** fetchPlayerWindow - โหลดพิกัดรถทุกคันช่วง [fromMs, fromMs+PLAYER_WINDOW_MS] (ตัดไม่ให้เกินท้ายเซสชัน) */
 async function fetchPlayerWindow(fromMs, requestId) {
@@ -506,6 +594,7 @@ function renderPlayerFrame() {
   if (buf) updateDotsAtTime(buf.positions, state.player.currentMs, []);
   timeScrubber.value = String(Math.round(state.player.currentMs));
   scrubberTimeLabel.textContent = formatClock(state.player.currentMs);
+  syncTimelineToTime(state.player.currentMs);
 }
 
 function stopPlayer() {
@@ -563,7 +652,7 @@ async function startPlayerAt(targetMs) {
     }
 
     const curBuf = state.player.buffer;
-    if (curBuf && !state.player.fetching && state.player.currentMs > curBuf.toMs - PLAYER_PREFETCH_MARGIN_MS) {
+    if (curBuf && !state.player.fetching && state.player.currentMs > curBuf.toMs - getPrefetchMarginMs()) {
       state.player.fetching = true;
       fetchPlayerWindow(curBuf.toMs, requestId)
         .then((next) => {
@@ -616,6 +705,7 @@ async function playEventOnMap(event) {
       timeScrubber.value = String(Math.round(simTime));
       scrubberTimeLabel.textContent = formatClock(simTime);
       updateDotsAtTime(positions, simTime, event.driverNumbers);
+      syncTimelineToTime(simTime);
       if (elapsed < durationMs) {
         state.mapAnimationHandle = requestAnimationFrame(tick);
       } else {
@@ -719,6 +809,8 @@ async function loadRace(sessionKey) {
 
     state.timeline = timeline;
     state.driverEventIndex = buildDriverEventIndex(timeline.events);
+    state.pitWindowIndex = buildPitWindowIndex(timeline.events);
+    state.lastSyncedEventId = null;
     state.driverFilter = "";
     state.typeFilter = "";
     typeFilterSelect.value = "";
