@@ -117,8 +117,7 @@ const state = {
   resultsSortAsc: true,
   driverEventIndex: null, // HashTable: driverNumber -> HashTable(eventId -> true)
   pitWindowIndex: null, // HashTable: driverNumber -> [{startMs, endMs}] ช่วงที่กำลังเข้าพิท (ใช้กับแมพ)
-  lastSyncedEventId: null, // event ที่ scroll+highlight ไว้ล่าสุดตามเวลาปัจจุบันของแมพ
-  lastSyncAt: 0, // สำหรับ throttle การ sync ไทม์ไลน์กับเวลาแมพ
+  lastSyncedEventId: null, // event ปัจจุบันที่ mark ไว้ตามเวลาของแมพ (ใช้ re-mark หลัง re-render ด้วย)
   racesByKey: new HashTable(64), // sessionKey -> race object (จากรายชื่อเรซ) สำหรับ lookup circuitKey/dateStart
   trackData: null, // ผลจาก public/tracks/<circuitKey>.json ของเรซปัจจุบัน
   mapAnimationHandle: null,
@@ -271,7 +270,7 @@ function renderTimeline() {
   show(timelineList);
 
   applyHighlight();
-  applyCurrentTimeMark(false); // re-render (เปลี่ยน sort/filter) ทำให้ DOM เดิมหาย ต้อง mark ใหม่ (ไม่ scroll)
+  markCurrentTimeCard(state.lastSyncedEventId); // re-render (เปลี่ยน sort/filter) ทำให้ DOM เดิมหาย ต้อง mark ใหม่ (ไม่ scroll)
 }
 
 function buildDriverEventIndex(events) {
@@ -334,47 +333,64 @@ function applyHighlight() {
   }
 }
 
-const TIMELINE_SYNC_THROTTLE_MS = 300;
-
-/** findCurrentEventId - หา event ล่าสุดที่เกิดไปแล้ว ณ targetMs (events เรียงตามเวลาจาก server อยู่แล้ว) */
-function findCurrentEventId(targetMs) {
+/**
+ * findEventBracket - หา event "ปัจจุบัน" และ "ถัดไป" ครอบ targetMs ไว้ พร้อม progress (0-1)
+ * ว่าระหว่างสอง event นี้ผ่านไปแล้วกี่เปอร์เซ็นต์ (events เรียงตามเวลาจาก server อยู่แล้ว)
+ * ใช้ progress นี้ไปเลื่อนจอแบบต่อเนื่อง (interpolate) ไม่ใช่กระโดดเป็นช่วง ๆ ทีละการ์ด
+ */
+function findEventBracket(targetMs) {
   const events = state.timeline?.events;
   if (!events || events.length === 0) return null;
-  let result = events[0].id;
-  for (const e of events) {
-    if (new Date(e.date).getTime() <= targetMs) result = e.id;
-    else break;
+
+  const firstMs = new Date(events[0].date).getTime();
+  if (targetMs <= firstMs) return { current: events[0], next: events[1] ?? null, progress: 0 };
+
+  for (let i = 0; i < events.length - 1; i++) {
+    const curMs = new Date(events[i].date).getTime();
+    const nextMs = new Date(events[i + 1].date).getTime();
+    if (targetMs >= curMs && targetMs <= nextMs) {
+      const progress = nextMs === curMs ? 1 : (targetMs - curMs) / (nextMs - curMs);
+      return { current: events[i], next: events[i + 1], progress };
+    }
   }
-  return result;
+  return { current: events[events.length - 1], next: null, progress: 0 };
 }
 
-/** applyCurrentTimeMark - ใส่ class ให้การ์ดที่ตรงกับ state.lastSyncedEventId, scroll ให้เห็นถ้า shouldScroll */
-function applyCurrentTimeMark(shouldScroll) {
-  const prevActive = timelineList.querySelector(".timeline-card.current-time");
-  if (prevActive) prevActive.classList.remove("current-time");
+/** absoluteTop - ตำแหน่ง top ของ element เทียบกับบนสุดของทั้งเอกสาร (ทนต่อโครงสร้าง CSS มากกว่า offsetTop) */
+function absoluteTop(el) {
+  return el.getBoundingClientRect().top + window.scrollY;
+}
 
-  if (!state.lastSyncedEventId) return;
-  const card = timelineList.querySelector(`[data-id="${state.lastSyncedEventId}"]`);
-  if (!card) return;
-  card.classList.add("current-time");
-  // block: "start" ให้การ์ดปัจจุบันลอยขึ้นไปอยู่บนสุดเสมอ แล้วการ์ดถัดไปค่อยเลื่อนขึ้นมาแทนที่
-  // ตามเวลาที่เดินไป (เหมือน now-playing ปักอยู่บนสุด ไม่ใช่ลอยอยู่กลางจอ)
-  if (shouldScroll) card.scrollIntoView({ behavior: "smooth", block: "start" });
+/** markCurrentTimeCard - ใส่/เอา class current-time ตาม eventId ที่ให้มา (ไม่ scroll) */
+function markCurrentTimeCard(eventId) {
+  const prevActive = timelineList.querySelector(".timeline-card.current-time");
+  if (prevActive && prevActive.dataset.id !== eventId) prevActive.classList.remove("current-time");
+  if (!eventId) return;
+  const card = timelineList.querySelector(`[data-id="${eventId}"]`);
+  if (card) card.classList.add("current-time");
 }
 
 /**
- * syncTimelineToTime - เลื่อนไทม์ไลน์ด้านล่างให้ตามเวลาปัจจุบันของแมพโดยอัตโนมัติ (throttle ไว้
- * เพราะเรียกได้ถี่มากจาก rAF loop ของการเล่น ไม่งั้น smooth-scroll จะชนกันเองจนสั่น)
+ * syncTimelineToTime - เลื่อนไทม์ไลน์ด้านล่างให้ตามเวลาปัจจุบันแบบต่อเนื่อง (ไม่ throttle เพราะ
+ * ต้องการให้ scroll ไหลลื่น ๆ ตามเวลาจริง ไม่ใช่กระโดดทีละการ์ด — การ์ดปัจจุบันจะค่อย ๆ เลื่อนขึ้น
+ * ไปแทนที่การ์ดก่อนหน้าตาม progress ระหว่าง event ปัจจุบันกับ event ถัดไป)
  */
 function syncTimelineToTime(targetMs) {
-  const now = performance.now();
-  if (now - state.lastSyncAt < TIMELINE_SYNC_THROTTLE_MS) return;
-  state.lastSyncAt = now;
+  const bracket = findEventBracket(targetMs);
+  if (!bracket) return;
 
-  const eventId = findCurrentEventId(targetMs);
-  if (!eventId || eventId === state.lastSyncedEventId) return;
-  state.lastSyncedEventId = eventId;
-  applyCurrentTimeMark(true);
+  state.lastSyncedEventId = bracket.current.id;
+  markCurrentTimeCard(bracket.current.id);
+
+  const currentEl = timelineList.querySelector(`[data-id="${bracket.current.id}"]`);
+  if (!currentEl) return; // ถูกกรองออกด้วย filter อยู่ ข้ามการเลื่อนจอ
+
+  const nextEl = bracket.next ? timelineList.querySelector(`[data-id="${bracket.next.id}"]`) : null;
+  const currentTop = absoluteTop(currentEl);
+  const nextTop = nextEl ? absoluteTop(nextEl) : currentTop;
+  const targetScrollTop = currentTop + (nextTop - currentTop) * bracket.progress;
+
+  window.scrollTo({ top: Math.max(0, targetScrollTop), behavior: "auto" });
 }
 
 function renderResultsTable() {
