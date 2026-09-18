@@ -1,0 +1,18 @@
+{
+  "name": "f1-race-rewind",
+  "version": "0.1.0",
+  "description": "F1 Race Rewind - 801201 miniproject (OpenF1 API + Express + vanilla JS)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "probe": "node scripts/probe-api.mjs",
+    "dev": "node api/index.js",
+    "test": "node test/dsa.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
