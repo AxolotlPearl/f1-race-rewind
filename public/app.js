@@ -100,6 +100,10 @@ const trackPath = document.getElementById("track-path");
 const carDotsGroup = document.getElementById("car-dots");
 const timeScrubber = document.getElementById("time-scrubber");
 const scrubberTimeLabel = document.getElementById("scrubber-time-label");
+const playPauseBtn = document.getElementById("play-pause-btn");
+const skipBackBtn = document.getElementById("skip-back-btn");
+const skipForwardBtn = document.getElementById("skip-forward-btn");
+const speedButtons = Array.from(document.querySelectorAll(".speed-btn"));
 
 // ---------- state ----------
 const state = {
@@ -117,6 +121,14 @@ const state = {
   mapAnimationHandle: null,
   scrubberDebounceHandle: null,
   mapRequestId: 0, // กัน race condition: ถ้ามีคำขอใหม่กว่าเริ่มไปแล้ว ผลของคำขอเก่าที่ resolve ทีหลังต้องถูกทิ้ง
+  player: {
+    playing: false,
+    speed: 1, // x1/x2/x5/x10
+    currentMs: null, // เวลาปัจจุบันของการเล่น (epoch ms)
+    buffer: null, // { fromMs, toMs, positions } หน้าต่างพิกัดที่โหลดไว้ล่วงหน้า
+    fetching: false,
+    lastFrameTime: null,
+  },
 };
 
 const TYPE_ICON = {
@@ -428,7 +440,11 @@ function updateDotsAtTime(positions, targetMs, highlightDriverNumbers = []) {
 }
 
 function showMapLoading() {
-  stopMapAnimation();
+  stopPlayer();
+  state.player.buffer = null;
+  state.player.currentMs = null;
+  speedButtons.forEach((b) => b.classList.toggle("active", b.dataset.speed === "1"));
+  state.player.speed = 1;
   hide(mapView);
   hide(mapEmpty);
   hide(mapErrorEl);
@@ -463,31 +479,113 @@ function formatClock(ms) {
   return new Date(ms).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-/** seekMapTo - โหลดตำแหน่งรถรอบเวลา targetMs (±5s) แล้วแสดงภาพนิ่งที่เวลานั้นพอดี (ใช้กับ scrubber) */
-async function seekMapTo(targetMs, highlightDriverNumbers = []) {
+function clamp(v, min, max) {
+  return Math.min(Math.max(v, min), max);
+}
+
+function getSessionBounds() {
+  return { min: Number(timeScrubber.min), max: Number(timeScrubber.max) };
+}
+
+const PLAYER_WINDOW_MS = 50000; // ต้อง < 60s (ข้อจำกัดของ /api/positions)
+const PLAYER_PREFETCH_MARGIN_MS = 10000; // เริ่มโหลดหน้าต่างถัดไปก่อนเวลาจะหมดหน้าต่างปัจจุบัน 10 วินาที
+
+/** fetchPlayerWindow - โหลดพิกัดรถทุกคันช่วง [fromMs, fromMs+PLAYER_WINDOW_MS] (ตัดไม่ให้เกินท้ายเซสชัน) */
+async function fetchPlayerWindow(fromMs, requestId) {
+  const { max } = getSessionBounds();
+  const toMs = Math.min(fromMs + PLAYER_WINDOW_MS, max);
+  if (toMs <= fromMs) return null;
+  const { positions } = await getPositions(state.currentSessionKey, new Date(fromMs).toISOString(), new Date(toMs).toISOString());
+  if (requestId !== state.mapRequestId) return null;
+  return { fromMs, toMs, positions };
+}
+
+/** renderPlayerFrame - วาดตำแหน่งรถที่ state.player.currentMs ปัจจุบัน + sync scrubber UI */
+function renderPlayerFrame() {
+  const buf = state.player.buffer;
+  if (buf) updateDotsAtTime(buf.positions, state.player.currentMs, []);
+  timeScrubber.value = String(Math.round(state.player.currentMs));
+  scrubberTimeLabel.textContent = formatClock(state.player.currentMs);
+}
+
+function stopPlayer() {
+  state.player.playing = false;
+  playPauseBtn.textContent = "▶";
+  stopMapAnimation();
+}
+
+/**
+ * startPlayerAt - seek ไปที่ targetMs (โหลด buffer ใหม่ถ้าจำเป็น) แล้วเริ่มเล่นต่อถ้า
+ * state.player.playing เป็น true อยู่ก่อนแล้ว (เรียกจากปุ่ม play, skip ±10s, หรือลาก scrubber)
+ */
+async function startPlayerAt(targetMs) {
   if (!state.trackData || state.currentSessionKey == null) return;
   stopMapAnimation();
   const requestId = ++state.mapRequestId;
 
-  const fromIso = new Date(targetMs - 5000).toISOString();
-  const toIso = new Date(targetMs + 5000).toISOString();
+  const { min, max } = getSessionBounds();
+  state.player.currentMs = clamp(targetMs, min, max);
 
-  try {
-    const { positions } = await getPositions(state.currentSessionKey, fromIso, toIso);
-    // ระหว่างรอ fetch อาจมีการสั่ง seek/play ใหม่แซงมาแล้ว (เช่นลาก scrubber เร็ว ๆ) ถ้าไม่ใช่
-    // คำขอล่าสุดอีกต่อไป ต้องทิ้งผลนี้ ไม่งั้นจะไปเขียนทับตำแหน่งที่ใหม่กว่าด้วยข้อมูลเก่า
-    if (requestId !== state.mapRequestId) return;
-    updateDotsAtTime(positions, targetMs, highlightDriverNumbers);
-  } catch (err) {
-    console.error(err);
-    // ไม่ทำให้แผนที่พัง แค่ไม่ขยับตำแหน่งรถในครั้งนี้ (เช่นช่วงเวลานั้นไม่มีข้อมูล)
+  const buf = state.player.buffer;
+  if (!buf || state.player.currentMs < buf.fromMs || state.player.currentMs >= buf.toMs) {
+    mapStatusLabel.textContent = "⏳ กำลังโหลด...";
+    try {
+      const newBuf = await fetchPlayerWindow(state.player.currentMs, requestId);
+      if (requestId !== state.mapRequestId) return;
+      state.player.buffer = newBuf;
+    } catch (err) {
+      console.error(err);
+      if (requestId !== state.mapRequestId) return;
+      mapStatusLabel.textContent = "โหลดตำแหน่งรถไม่สำเร็จ";
+      return;
+    }
+    if (mapStatusLabel.textContent === "⏳ กำลังโหลด...") mapStatusLabel.textContent = "";
   }
+  renderPlayerFrame();
+
+  if (!state.player.playing) return;
+
+  state.player.lastFrameTime = performance.now();
+  const tick = () => {
+    if (requestId !== state.mapRequestId) return;
+
+    const now = performance.now();
+    const deltaMs = (now - state.player.lastFrameTime) * state.player.speed;
+    state.player.lastFrameTime = now;
+    state.player.currentMs += deltaMs;
+
+    const bounds = getSessionBounds();
+    if (state.player.currentMs >= bounds.max) {
+      state.player.currentMs = bounds.max;
+      renderPlayerFrame();
+      stopPlayer();
+      return;
+    }
+
+    const curBuf = state.player.buffer;
+    if (curBuf && !state.player.fetching && state.player.currentMs > curBuf.toMs - PLAYER_PREFETCH_MARGIN_MS) {
+      state.player.fetching = true;
+      fetchPlayerWindow(curBuf.toMs, requestId)
+        .then((next) => {
+          state.player.fetching = false;
+          if (requestId === state.mapRequestId && next) state.player.buffer = next;
+        })
+        .catch((err) => {
+          state.player.fetching = false;
+          console.error(err);
+        });
+    }
+
+    renderPlayerFrame();
+    state.mapAnimationHandle = requestAnimationFrame(tick);
+  };
+  state.mapAnimationHandle = requestAnimationFrame(tick);
 }
 
 /** playEventOnMap - เล่น animation ตำแหน่งรถช่วง ±5 วินาทีรอบ event ที่คลิกในไทม์ไลน์ */
 async function playEventOnMap(event) {
   if (!state.trackData || state.currentSessionKey == null) return;
-  stopMapAnimation();
+  stopPlayer(); // ถ้ากำลังเล่นแบบต่อเนื่องอยู่ ให้หยุดก่อน แล้วสลับไปเล่นคลิปเหตุการณ์นี้แทน
   const requestId = ++state.mapRequestId;
 
   const centerMs = new Date(event.date).getTime();
@@ -499,6 +597,9 @@ async function playEventOnMap(event) {
   mapStatusLabel.textContent = "▶ กำลังเล่นเหตุการณ์...";
   timeScrubber.value = String(centerMs);
   scrubberTimeLabel.textContent = formatClock(centerMs);
+  // คลิปนี้ไม่ได้ใช้ state.player.buffer (คนละหน้าต่างเวลากัน) เคลียร์ไว้เพื่อบังคับให้โหลดใหม่
+  // ถ้าผู้ใช้กด Play ต่อจากจุดนี้
+  state.player.buffer = null;
 
   try {
     const { positions } = await getPositions(state.currentSessionKey, fromIso, toIso);
@@ -511,6 +612,9 @@ async function playEventOnMap(event) {
       if (requestId !== state.mapRequestId) return; // ถูกยกเลิกโดยคำสั่งใหม่กว่าระหว่าง animate
       const elapsed = performance.now() - animStart;
       const simTime = fromMs + Math.min(elapsed, durationMs);
+      state.player.currentMs = simTime;
+      timeScrubber.value = String(Math.round(simTime));
+      scrubberTimeLabel.textContent = formatClock(simTime);
       updateDotsAtTime(positions, simTime, event.driverNumbers);
       if (elapsed < durationMs) {
         state.mapAnimationHandle = requestAnimationFrame(tick);
@@ -553,7 +657,7 @@ async function loadTrackForRace(race) {
     const initialMs = state.timeline?.events?.[0] ? new Date(state.timeline.events[0].date).getTime() : new Date(race.dateStart).getTime();
     timeScrubber.value = String(initialMs);
     scrubberTimeLabel.textContent = formatClock(initialMs);
-    await seekMapTo(initialMs);
+    await startPlayerAt(initialMs);
   } catch (err) {
     console.error(err);
     showMapErrorState();
@@ -713,10 +817,39 @@ timelineList.addEventListener("click", (evt) => {
 });
 
 timeScrubber.addEventListener("input", () => {
+  if (state.player.playing) stopPlayer(); // ลาก scrubber ให้หยุดเล่นต่อเนื่องไว้ก่อน
   const targetMs = Number(timeScrubber.value);
   scrubberTimeLabel.textContent = formatClock(targetMs);
   clearTimeout(state.scrubberDebounceHandle);
-  state.scrubberDebounceHandle = setTimeout(() => seekMapTo(targetMs), 200);
+  state.scrubberDebounceHandle = setTimeout(() => startPlayerAt(targetMs), 200);
+});
+
+playPauseBtn.addEventListener("click", () => {
+  if (!state.trackData || state.currentSessionKey == null) return;
+  if (state.player.playing) {
+    stopPlayer();
+    return;
+  }
+  state.player.playing = true;
+  playPauseBtn.textContent = "⏸";
+  startPlayerAt(state.player.currentMs ?? Number(timeScrubber.value));
+});
+
+function skipBy(deltaMs) {
+  if (!state.trackData || state.currentSessionKey == null) return;
+  const base = state.player.currentMs ?? Number(timeScrubber.value);
+  startPlayerAt(base + deltaMs);
+}
+
+skipBackBtn.addEventListener("click", () => skipBy(-10000));
+skipForwardBtn.addEventListener("click", () => skipBy(10000));
+
+speedButtons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    speedButtons.forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.player.speed = Number(btn.dataset.speed);
+  });
 });
 
 timelineRetryBtn.addEventListener("click", () => {

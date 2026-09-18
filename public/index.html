@@ -50,6 +50,19 @@
           <path id="track-path" class="track-path"></path>
           <g id="car-dots"></g>
         </svg>
+        <div class="player-row">
+          <div class="player-buttons" role="group" aria-label="ควบคุมการเล่น">
+            <button id="skip-back-btn" class="icon-btn" title="ย้อน 10 วินาที">⏪ 10s</button>
+            <button id="play-pause-btn" class="icon-btn play-pause-btn" title="เล่น/หยุด">▶</button>
+            <button id="skip-forward-btn" class="icon-btn" title="ข้ามไป 10 วินาที">10s ⏩</button>
+          </div>
+          <div class="speed-buttons" role="group" aria-label="ความเร็วเล่น">
+            <button class="speed-btn active" data-speed="1">x1</button>
+            <button class="speed-btn" data-speed="2">x2</button>
+            <button class="speed-btn" data-speed="5">x5</button>
+            <button class="speed-btn" data-speed="10">x10</button>
+          </div>
+        </div>
         <div class="map-controls">
           <input type="range" id="time-scrubber" min="0" max="1000" value="0" step="1" />
           <span id="scrubber-time-label" class="scrubber-time-label">--:--:--</span>
