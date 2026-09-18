@@ -233,10 +233,15 @@ main {
 .timeline-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 4px 0 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* กล่องเลื่อนของตัวเองแยกจากหน้าเว็บ ไม่งั้นตอน sync กับเวลาแมพ การเลื่อนหน้าเว็บทั้งหน้า
+     จะพาแมพเลื่อนหายไปจากจอด้วย ผู้ใช้อยากเห็นแมพกับไทม์ไลน์พร้อมกันตลอดเวลา */
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  scroll-behavior: auto; /* คุม scroll เองทุกเฟรมอยู่แล้ว ไม่ให้ CSS smooth มาช่วงชิงกัน */
 }
 
 .timeline-card {

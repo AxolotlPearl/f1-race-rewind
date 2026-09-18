@@ -356,9 +356,9 @@ function findEventBracket(targetMs) {
   return { current: events[events.length - 1], next: null, progress: 0 };
 }
 
-/** absoluteTop - ตำแหน่ง top ของ element เทียบกับบนสุดของทั้งเอกสาร (ทนต่อโครงสร้าง CSS มากกว่า offsetTop) */
-function absoluteTop(el) {
-  return el.getBoundingClientRect().top + window.scrollY;
+/** topWithinContainer - ตำแหน่ง top ของ el เทียบกับ scrollTop ของ container ที่เลื่อนเอง (ไม่ใช่หน้าเว็บ) */
+function topWithinContainer(el, container) {
+  return el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
 }
 
 /** markCurrentTimeCard - ใส่/เอา class current-time ตาม eventId ที่ให้มา (ไม่ scroll) */
@@ -386,11 +386,12 @@ function syncTimelineToTime(targetMs) {
   if (!currentEl) return; // ถูกกรองออกด้วย filter อยู่ ข้ามการเลื่อนจอ
 
   const nextEl = bracket.next ? timelineList.querySelector(`[data-id="${bracket.next.id}"]`) : null;
-  const currentTop = absoluteTop(currentEl);
-  const nextTop = nextEl ? absoluteTop(nextEl) : currentTop;
+  const currentTop = topWithinContainer(currentEl, timelineList);
+  const nextTop = nextEl ? topWithinContainer(nextEl, timelineList) : currentTop;
   const targetScrollTop = currentTop + (nextTop - currentTop) * bracket.progress;
 
-  window.scrollTo({ top: Math.max(0, targetScrollTop), behavior: "auto" });
+  // เลื่อนแค่กล่อง timelineList เอง ไม่เลื่อนหน้าเว็บทั้งหน้า เพื่อให้เห็นแมพกับไทม์ไลน์พร้อมกันตลอด
+  timelineList.scrollTop = Math.max(0, targetScrollTop);
 }
 
 function renderResultsTable() {
