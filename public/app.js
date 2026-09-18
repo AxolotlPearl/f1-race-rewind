@@ -357,7 +357,9 @@ function applyCurrentTimeMark(shouldScroll) {
   const card = timelineList.querySelector(`[data-id="${state.lastSyncedEventId}"]`);
   if (!card) return;
   card.classList.add("current-time");
-  if (shouldScroll) card.scrollIntoView({ behavior: "smooth", block: "center" });
+  // block: "start" ให้การ์ดปัจจุบันลอยขึ้นไปอยู่บนสุดเสมอ แล้วการ์ดถัดไปค่อยเลื่อนขึ้นมาแทนที่
+  // ตามเวลาที่เดินไป (เหมือน now-playing ปักอยู่บนสุด ไม่ใช่ลอยอยู่กลางจอ)
+  if (shouldScroll) card.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 /**
