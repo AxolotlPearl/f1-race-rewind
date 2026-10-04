@@ -241,6 +241,7 @@ main {
      จะพาแมพเลื่อนหายไปจากจอด้วย ผู้ใช้อยากเห็นแมพกับไทม์ไลน์พร้อมกันตลอดเวลา */
   max-height: min(70vh, 560px);
   overflow-y: auto;
+  position: relative; /* ให้ offsetTop ของการ์ดอ้างอิงกล่องนี้ ตัว sync จะได้ไม่ต้องอ่าน layout ทั้งหน้า */
   scroll-behavior: auto; /* คุม scroll เองทุกเฟรมอยู่แล้ว ไม่ให้ CSS smooth มาช่วงชิงกัน */
 }
 
@@ -486,8 +487,35 @@ main {
   margin-top: 8px;
 }
 
-.map-controls input[type="range"] {
+.scrubber-wrap {
   flex: 1;
+  min-width: 0;
+}
+
+.scrubber-wrap input[type="range"] {
+  width: 100%;
+  display: block;
+}
+
+/* แถบ buffer แบบวิดีโอ: แสดงว่าพิกัดช่วงไหนโหลดเก็บไว้แล้ว เล่นผ่านช่วงนี้ได้ลื่นไม่ต้องรอ */
+.buffer-track {
+  position: relative;
+  height: 3px;
+  margin-top: 4px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.buffer-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  background: #8b949e;
+  border-radius: 2px;
+  transition: width 0.3s ease, left 0.3s ease;
 }
 
 .scrubber-time-label {

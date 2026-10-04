@@ -64,7 +64,12 @@
           </div>
         </div>
         <div class="map-controls">
-          <input type="range" id="time-scrubber" min="0" max="1000" value="0" step="1" />
+          <div class="scrubber-wrap">
+            <input type="range" id="time-scrubber" min="0" max="1000" value="0" step="1" aria-label="เลื่อนดูช่วงเวลา" />
+            <div class="buffer-track" title="ช่วงที่โหลดข้อมูลเก็บไว้แล้ว">
+              <div id="buffer-fill" class="buffer-fill"></div>
+            </div>
+          </div>
           <span id="scrubber-time-label" class="scrubber-time-label">--:--:--</span>
         </div>
       </div>
