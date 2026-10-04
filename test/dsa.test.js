@@ -211,6 +211,37 @@ test("enqueue/dequeue สลับกันจำนวนมากต้อง�
   assert.deepEqual(output, expected);
 });
 
+test("at(i) อ่านสมาชิกตามลำดับจากหน้าคิวได้ถูก แม้ข้อมูลวนรอบ (wrap-around) ใน buffer แล้ว", () => {
+  const q = new Queue(4);
+  q.enqueue("a");
+  q.enqueue("b");
+  q.enqueue("c");
+  q.dequeue(); // head ขยับไป index 1
+  q.dequeue(); // head ขยับไป index 2
+  q.enqueue("d");
+  q.enqueue("e"); // e เขียนที่ index 0 (วนรอบแล้ว)
+  assert.equal(q.at(0), "c");
+  assert.equal(q.at(1), "d");
+  assert.equal(q.at(2), "e");
+  assert.equal(q.at(3), undefined, "เกินจำนวนสมาชิกต้องได้ undefined");
+  assert.equal(q.at(-1), undefined);
+  assert.equal(q.peekLast(), "e");
+});
+
+test("clear() ล้างคิวแล้วใช้ต่อได้ตามปกติ", () => {
+  const q = new Queue(2);
+  q.enqueue(1);
+  q.enqueue(2);
+  q.enqueue(3);
+  q.clear();
+  assert.equal(q.isEmpty(), true);
+  assert.equal(q.dequeue(), undefined);
+  assert.equal(q.peekLast(), undefined);
+  q.enqueue(9);
+  assert.equal(q.peek(), 9);
+  assert.equal(q.size, 1);
+});
+
 console.log(`\n=== สรุป: ${passed} ผ่าน, ${failed} ล้มเหลว ===\n`);
 
 if (failed > 0) {
