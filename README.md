@@ -26,10 +26,13 @@
 
 ## วิธีใช้งาน (สำหรับ demo/อาจารย์)
 
-1. เปิดเว็บ → **มีเรซ default โหลดไว้ให้แล้วทันที** (2024 Bahrain GP) ไม่ต้องเลือกอะไรก่อน
-2. เปลี่ยนปี/เรซได้จากดรอปดาวน์ด้านบน (รองรับปี 2023–2025)
+1. เปิดเว็บ → **มีเรซโหลดไว้ให้แล้วทันที** คือเรซล่าสุดที่แข่งจบแล้วของปีล่าสุด ไม่ต้องเลือกอะไรก่อน
+2. เปลี่ยนปี/เรซได้จากดรอปดาวน์ด้านบน — **รองรับตั้งแต่ปี 2023 ถึงปีปัจจุบันโดยอัตโนมัติ** เรซใหม่ที่เพิ่งแข่งจบ
+   จะโผล่เองภายใน ~10 นาที (ปีใหม่ก็โผล่เอง) ไม่ต้องแก้โค้ด; เรซในปฏิทินที่ยังไม่แข่งหรือถูกยกเลิกจะไม่แสดง
 3. **แผนที่สนาม** (ด้านบน): มีปุ่ม ▶ เล่น/หยุด, ⏪⏩ ข้าม 10 วินาที, ปุ่มความเร็ว x1/x2/x5/x10 และ scrubber
    ลากดูช่วงเวลาที่ต้องการเองได้ — รถแต่ละคันแสดงเป็นจุดสีทีมจริง มี badge "🔧 PIT" ขึ้นตอนกำลังเข้าพิท
+   - ตัวเล่น**โหลดข้อมูลเก็บไว้ล่วงหน้าก่อนแล้วค่อยวิ่ง** (เหมือนวิดีโอ) แถบสีเทาใต้ scrubber คือช่วงที่โหลดแล้ว
+     ถ้าข้อมูลไม่พอจะขึ้น "⏳ กำลังโหลดข้อมูลล่วงหน้า xx%" แล้ววิ่งต่อเอง แทนที่รถจะค้างกระตุก
 4. **ไทม์ไลน์เหตุการณ์** (ใต้แผนที่): เลื่อนตามเวลาปัจจุบันของแผนที่แบบ real-time โดยอัตโนมัติ (การ์ดที่ตรง
    เวลาจะสว่างขึ้นและลอยขึ้นบนสุดของกล่อง) หรือคลิกการ์ดเหตุการณ์ไหนก็ได้เพื่อเล่นแอนิเมชันตำแหน่งรถ ±5
    วินาทีรอบเหตุการณ์นั้นบนแผนที่ทันที
@@ -68,6 +71,18 @@
 - ไทม์ไลน์เลื่อนตามเวลาปัจจุบันของแผนที่แบบต่อเนื่อง (ไม่กระโดดทีละการ์ด) ในกล่องเลื่อนของตัวเอง
   เพื่อให้เห็นแผนที่กับไทม์ไลน์พร้อมกันตลอดเวลา ไม่ต้องเลื่อนหน้าเว็บทั้งหน้า
 
+### อัปเดตรองรับปี 2026 + แก้แผนที่กระตุก
+- **ปี/เรซใหม่ไม่ต้องแก้โค้ด**: ช่วงปีคำนวณจากวันที่ปัจจุบัน (`/api/years`), กรองเรซที่ยังไม่แข่ง/ถูกยกเลิก,
+  cache ของปีปัจจุบันหมดอายุใน 10 นาที (ปีที่จบแล้ว cache ถาวร)
+- **สนามใหม่ไม่ต้องแก้โค้ด**: ถ้าไม่มีไฟล์เส้นสนาม precompute ไว้ server จะสร้างสดจากพิกัดจริงผ่าน
+  `/api/track/:sessionKey` (ลองหลายนักขับ/หลายช่วงของเรซเอง เผื่อมีธงแดง) แล้ว cache ที่ CDN 30 วัน —
+  ทดสอบแล้วกับสนามใหม่ปี 2026 ทั้งสองสนาม (Madring, Kuala Lumpur) ก่อนจะ precompute ไว้ให้เร็วขึ้นภายหลัง
+- **แก้กระตุก**: ตัวเล่นเก็บพิกัดเป็นก้อนในคิวล่วงหน้า, รอให้มีข้อมูลพอก่อนค่อยวิ่ง, ถ้าเน็ตช้าจะหยุดนาฬิการอ
+  แทนที่เวลาเดินแต่รถค้าง; ลดงานต่อเฟรม (parse วันที่ครั้งเดียวตอนโหลด, binary search, ไม่อ่าน layout
+  ทุกเฟรม, อัปเดต scrubber เฉพาะตอนวินาทีเปลี่ยน — วัดแล้วการเขียนค่า scrubber ทุกเฟรมแพงที่สุดในเฟรม)
+- **Rate limiter 2 ระดับ**: request ที่ผู้ใช้กำลังรอ ลัดหน้าการโหลดล่วงหน้า และกันโควตา 10/30 ต่อนาทีไว้ให้
+  เสมอ — ก่อนแก้ สลับเรซเร็ว ๆ แล้วเปิดเรซใหม่ต้องรอ ~15–45 วินาที หลังแก้เหลือ ~3.5 วินาที
+
 ---
 
 ## ทำงานยังไง (สถาปัตยกรรม)
@@ -87,9 +102,13 @@ GET /api/race/:sessionKey  (Express, api/index.js)
 Frontend (public/app.js, vanilla JS ไม่มี framework)
    ├─ import DSA ชุดเดียวกับ server ตรงจาก /lib (ES module, ไม่ duplicate โค้ด)
    ├─ เรียง/กรอง/ไฮไลต์ ทำในหน่วยความจำทั้งหมด
-   └─ แผนที่: โหลดเส้นสนามจาก public/tracks/<circuitKey>.json + ดึงพิกัดสดจาก
-      GET /api/positions/:sessionKey?from=&to= (บังคับหน้าต่างเวลา ≤ 60 วินาที กัน response ใหญ่เกิน)
+   └─ แผนที่: โหลดเส้นสนามจาก public/tracks/<circuitKey>.json (ไม่มี → GET /api/track/:sessionKey สร้างสด)
+      + ดึงพิกัดเป็นก้อนละ 50 วินาทีจาก GET /api/positions/:sessionKey?from=&to= (≤ 60 วินาทีต่อ request)
+      ขอบก้อนจัดให้ตรงตารางเวลาเสมอ URL จึงซ้ำได้และ CDN ตอบจาก cache ได้
 ```
+
+Cache 3 ชั้น: CDN ของ Vercel (`Cache-Control: s-maxage`) → module-scope ใน serverless function →
+localStorage ในเบราว์เซอร์ (ข้อมูลที่ยังเปลี่ยนได้ เช่นรายชื่อเรซปีปัจจุบัน มีวันหมดอายุ)
 
 ## DSA ที่ใช้ (ครบ Sort บังคับ + เกินขั้นต่ำอีก 2 ตัว)
 
@@ -97,7 +116,7 @@ Frontend (public/app.js, vanilla JS ไม่มี framework)
 |---|---|---|
 | **Sort** (merge sort + pairwise merge, เขียนเอง) | รวมไทม์ไลน์จาก 3 endpoint, ปุ่มเรียงตามเวลา/รอบ/นักขับ, เรียงตารางผล, จัดอันดับพิทสต็อป | เรียง/สลับมุมมองได้ทันทีโดยไม่ยิง API ใหม่ |
 | **Hash Table** (chaining เขียนเอง) | lookup ข้อมูลนักขับจาก driver_number, lookup สนามจาก meeting_key, index สำหรับไฮไลต์นักขับแบบ O(1) | คลิกนักขับแล้วไฮไลต์ทันทีแม้เรซมี event เกือบ 500 รายการ |
-| **Queue** (circular buffer เขียนเอง) | rate limiter คุมไม่ให้ยิง OpenF1 เกิน 3 req/s / 30 req/min | ไม่โดน 429 จน error state ขึ้นทั้งที่ควรเห็นข้อมูลได้ปกติ |
+| **Queue** (circular buffer เขียนเอง) | rate limiter 2 ระดับ (คิว high/low) คุมไม่ให้ยิง OpenF1 เกิน 3 req/s / 30 req/min; บัฟเฟอร์ก้อนพิกัดของตัวเล่นแผนที่ (โหลดเติมท้ายคิว เล่นผ่านแล้ว dequeue หัวคิว) | ไม่โดน 429 จน error; request ที่ผู้ใช้รออยู่ไม่ติดหลังงาน background; แผนที่เล่นลื่นไม่กระตุก |
 
 เหตุผลแบบละเอียด (ก/ข/ค ตามที่ใบงานกำหนด) อยู่ใน **[docs/decision-log.md](docs/decision-log.md)**
 
@@ -115,28 +134,30 @@ Frontend (public/app.js, vanilla JS ไม่มี framework)
 ```bash
 npm install
 npm run dev          # เปิด http://localhost:3000
-npm test             # รันเทส DSA (sort/hash/queue) 22 เคส
-node scripts/build-track.js <sessionKey> <driverNumber> <offsetMinutes> <windowSeconds>
-                     # สร้างไฟล์เส้นสนามใหม่ (ไม่จำเป็นต้องรัน มีไฟล์ครบ 24 สนามอยู่แล้วใน public/tracks/)
+npm test             # เทส DSA (sort/hash/queue) 24 เคส + rate limiter 5 เคส
+node scripts/build-track.js <sessionKey>
+                     # (ไม่บังคับ) precompute เส้นสนามให้โหลดเร็ว — ถ้าไม่รัน เว็บจะสร้างสดให้เองตอนเปิดเรซ
 ```
 
 ## โครงสร้างไฟล์หลัก
 
 ```
-api/index.js          Express app + routes (/api/races, /api/race/:key, /api/positions/:key)
+api/index.js          Express app + routes (/api/years, /api/races, /api/race/:key, /api/positions/:key, /api/track/:key)
 lib/sort.js           merge sort + pairwise merge (เขียนเอง)
 lib/HashTable.js       hash table แบบ chaining (เขียนเอง)
 lib/Queue.js           circular buffer queue (เขียนเอง)
-lib/rateLimiter.js     ใช้ Queue คุม rate limit การเรียก OpenF1
-lib/openf1.js          client เรียก OpenF1 + cache + retry
+lib/rateLimiter.js     ใช้ Queue 2 ระดับคุม rate limit การเรียก OpenF1
+lib/openf1.js          client เรียก OpenF1 + cache (มีวันหมดอายุ) + retry
 lib/timeline.js        รวม event หลาย endpoint เป็นไทม์ไลน์เดียว
-lib/track.js           ตัดพิกัดดิบให้เหลือ 1 รอบสนาม + normalize เป็นพิกัด SVG
+lib/track.js           normalize พิกัดดิบเป็นพิกัด SVG
+lib/trackBuilder.js    หา 1 รอบสนามจากพิกัดดิบ + สร้างเส้นสนามอัตโนมัติ (ใช้ทั้งสคริปต์และ /api/track)
 lib/positions.js       จัดกลุ่ม+downsample พิกัดรถสำหรับแผนที่
 public/                หน้าเว็บ (index.html, app.js, style.css)
-public/tracks/*.json   เส้นสนามที่ precompute ไว้ล่วงหน้า (24 สนาม)
-scripts/build-track.js สคริปต์สร้างไฟล์เส้นสนาม (รันครั้งเดียวแบบ offline)
+public/tracks/*.json   เส้นสนามที่ precompute ไว้ล่วงหน้า (26 สนาม ปี 2023–2026)
+scripts/build-track.js สคริปต์ precompute เส้นสนาม (ไม่บังคับ)
 scripts/probe-api.mjs  สคริปต์เฟส 0 สำรวจ API จริง
-test/dsa.test.js       เทส sort/hash/queue รวมเคส collision และ queue เต็ม/ว่าง
+test/dsa.test.js       เทส sort/hash/queue รวมเคส collision, queue เต็ม/ว่าง, wrap-around
+test/rateLimiter.test.js เทสลำดับ high/low, ยกเลิกงาน, ไม่เกินโควตา
 docs/decision-log.md   Decision Log ตอบ 3 ข้อบังคับของใบงาน
 ```
 
@@ -145,5 +166,8 @@ docs/decision-log.md   Decision Log ตอบ 3 ข้อบังคับข�
 - Vercel รัน Express แบบ serverless — ตัวแปรใน memory (cache, rate limiter state) อาจรีเซ็ตข้าม request
   จึงมี retry-with-backoff กันเผื่อเจอ 429 จาก jitter ของ rate limit ที่แชร์กับผู้ใช้คนอื่นทั่วโลก
 - แสดงได้เฉพาะข้อมูลย้อนหลัง (REPLAY) ไม่ใช่ข้อมูลสด เพราะ live data ของ OpenF1 เป็นบริการเสียเงิน
-- แผนที่สนามรองรับ 24 สนามที่ปรากฏจริงในปฏิทิน 2023–2025 ทั้งหมด — ถ้าเลือกเรซที่ไม่มีไฟล์เส้นสนาม
-  precompute ไว้ จะขึ้น empty state "ยังไม่มีข้อมูลแผนที่สนามนี้" แทนที่จะพัง
+  เรซที่เพิ่งจบไม่กี่ชั่วโมงอาจยังมีข้อมูลไม่ครบจากฝั่ง OpenF1 (เว็บไม่ cache ถาวรจนผ่านไป 1 วัน)
+- OpenF1 ให้โควตาฟรีแค่ 30 request/นาที ถ้าเปิดเรซใหม่ที่ไม่เคยมีใครเปิดหลาย ๆ เรซติดกันในนาทีเดียว
+  อาจต้องรอบ้าง (เรซที่เคยเปิดแล้วจะตอบจาก cache ของ CDN ทันที)
+- ถ้าสร้างเส้นสนามของสนามใหม่ไม่สำเร็จ (เช่นข้อมูลพิกัดยังไม่มา) จะขึ้น empty state "ยังไม่มีข้อมูลแผนที่
+  สนามนี้" แทนที่จะพัง ไทม์ไลน์และผลการแข่งยังใช้ได้ตามปกติ
