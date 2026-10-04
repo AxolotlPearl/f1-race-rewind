@@ -7,7 +7,7 @@
   "scripts": {
     "probe": "node scripts/probe-api.mjs",
     "dev": "node api/index.js",
-    "test": "node test/dsa.test.js"
+    "test": "node test/dsa.test.js && node test/rateLimiter.test.js"
   },
   "engines": {
     "node": ">=18"
